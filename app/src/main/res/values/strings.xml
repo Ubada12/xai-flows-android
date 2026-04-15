@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">XAI-FLOWS</string>
+    <string name="hero_desc">XAI-FLOWS is an innovative platform designed to revolutionize flood monitoring and prediction. By combining cutting-edge AI technology with explainability, XAI-FLOWS provides accurate and transparent flood warnings, predicting potential flooding events before they occur.</string>
+    <string name="hero_tagline">"\"Our platform not only predicts floods, but also helps you prepare by providing real-time alerts based on AI-driven data analysis\""</string>
+    <string name="vision">At XAI-FLOWS, we aim to create safer communities using AI and Explainable AI to predict and manage flood risks, helping people make informed decisions and protect lives and property.</string>
+    <string name="goals_drainage">We analyze drainage systems to predict and prevent blockages, reducing flood risks and ensuring smoother water flow during heavy rains.</string>
+    <string name="goals_low_lying">We focus on low-lying areas, providing timely flood risk assessments to protect vulnerable communities.</string>
+    <string name="goals_rainfall">We analyze annual rainfall patterns to predict flood risks and improve preparedness in prone regions.</string>
+    <string name="features_flood_predictions">Predict floods using advanced AI that analyzes drainage, rainfall, and terrain for accurate risk forecasts.</string>
+    <string name="features_real_time_monitoring">Stay updated with live monitoring of flood-prone areas and immediate risk detection.</string>
+    <string name="features_explainable_ai">Provides clear, transparent insights into how flood predictions are made.</string>
+    <string name="features_flood_risk_alerts">Instant alerts to prepare and act before floods impact your area.</string>
+    <string name="features_user_friendly_interface">Simple, intuitive design for quick access to predictions and insights.</string>
+    <string name="features_interactive_visualization_tools">Visual maps and graphs for better understanding of flood risks and patterns.</string>
+    <string name="analytics_confusion_matrix">The confusion matrix shows how our model’s predictions compare to actual outcomes, highlighting strengths and areas for improvement.</string>
+    <string name="analytics_model_performance_metrics">Comprehensive metrics highlight the model’s balanced precision, recall, and overall effectiveness.</string>
+    <string name="analytics_precision_recall_curve">The precision-recall curve shows performance across thresholds, helping balance false positives and negatives.</string>
+    <string name="analytics_roc_curve_analysis">The ROC curve shows strong discriminative ability (AUC 0.90), far above random chance.</string>
+    <string name="analytics_shap_feature_importance">SHAP analysis highlights key environmental factors driving flood predictions, aiding model improvement and management.</string>
+</resources>

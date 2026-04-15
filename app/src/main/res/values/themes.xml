@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.XAI_Flows" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Your app theme setup can go here -->
+    </style>
+
+    <style name="Theme.XAI_Flows.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#121C3B</item> <!-- deep navy blue -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/logo</item> <!-- your logo -->
+        <item name="postSplashScreenTheme">@style/Theme.XAI_Flows</item>
+    </style>
+
+</resources>
