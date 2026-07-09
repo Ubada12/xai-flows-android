@@ -1,8 +1,29 @@
+/**
+ * PredictionScreen.kt
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Main prediction UI. Supports two modes:
+ *
+ *   Live mode    — starts RealTimeMonitoringService; the foreground service
+ *                  fetches an S3 image every 20 s, runs the full ML pipeline
+ *                  on the backend, and broadcasts results back here via a
+ *                  BroadcastReceiver.
+ *
+ *   Manual mode  — user picks an image from the gallery; pressing "Get
+ *                  Prediction" calls the backend directly via FloodViewModel.
+ *
+ * Changes in this version:
+ *   - RealTimeMonitoringContract moved to core.service; import instead of
+ *     duplicating the object definition here.
+ *   - ACTION_REVERSE_GEOCODE removed (backend now geocodes internally;
+ *     location data is inside PredictFloodResponse.location).
+ *   - reverseGeocodeState removed; predictionData reads city/address from
+ *     predictFloodState.data.location.
+ *   - weatherData mapping updated for new WeatherInfo field names.
+ *   - Default coordinates changed from London to Mumbai (19.0760, 72.8777).
+ *   - getAirState signature changed: rh: Int → rh: Double.
+ */
 package com.example.xai_flows.ui.screens
 
-// ------------------------------
-// Imports
-// ------------------------------
 import android.Manifest
 import android.content.*
 import android.content.pm.PackageManager
@@ -34,60 +55,37 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.xai_flows.core.cache.CacheManager
 import com.example.xai_flows.core.data.models.PredictFloodRequest
 import com.example.xai_flows.core.data.models.PredictFloodResponse
-import com.example.xai_flows.core.data.models.ReverseGeocodeResponse
+import com.example.xai_flows.core.service.RealTimeMonitoringContract
 import com.example.xai_flows.core.service.RealTimeMonitoringService
 import com.example.xai_flows.ui.components.prediction.*
 import com.example.xai_flows.ui.models.*
 import com.example.xai_flows.ui.viewmodel.ApiState
 import com.example.xai_flows.ui.viewmodel.FloodViewModel
-import com.example.xai_flows.utils.CacheManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.MultipartBody
+import java.util.Calendar
+import com.example.xai_flows.core.config.AppConfig
 
-/**
- * PredictionScreen.kt
- * --------------------
- * Refactored for: ultra-clean structure, strong logging, modular helpers, and clear comments.
- *
- * Highlights
- * - Centralized TAG + verbose debug logs around every state transition.
- * - Safe Internet + Notification-permission checks with inline logic (to satisfy lint).
- * - BroadcastReceiver lifecycle is scoped to composition via DisposableEffect.
- * - Small composable for readability: Controls, Inputs, Live/Upload section, Errors, and Cards.
- */
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// -------------------------------------------------
-// Logging utilities & constants
-// -------------------------------------------------
 private const val TAG = "PredictionScreen"
 
-// Contract keys kept as object for discoverability & single source of truth
-object RealTimeMonitoringContract {
-    const val ACTION_LATEST_IMAGE = "com.example.xai_flows.ACTION_LATEST_IMAGE"
-    const val ACTION_REVERSE_GEOCODE = "com.example.xai_flows.ACTION_REVERSE_GEOCODE"
-    const val ACTION_PREDICT_FLOOD = "com.example.xai_flows.ACTION_PREDICT_FLOOD"
-    const val ACTION_ERROR = "com.example.xai_flows.ACTION_ERROR"
-    const val ACTION_STATUS = "com.example.xai_flows.ACTION_STATUS"
+// ─── Environment checks ───────────────────────────────────────────────────────
 
-    const val EXTRA_DATA = "extra_data"
-    const val EXTRA_ERROR = "extra_error"
-    const val EXTRA_STATUS = "extra_status"
-}
-
-// -------------------------------------------------
-// Environment checks (inline logic keeps lint happy)
-// -------------------------------------------------
+/** Returns true when an active internet connection is present. */
 @RequiresApi(Build.VERSION_CODES.M)
 private fun isInternetAvailable(context: Context): Boolean {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    val network = cm.activeNetwork ?: return false
-    val capabilities = cm.getNetworkCapabilities(network) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    val cm       = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network  = cm.activeNetwork ?: return false
+    val caps     = cm.getNetworkCapabilities(network) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
+/** Returns true when POST_NOTIFICATIONS is granted (always true on API < 33). */
 private fun hasNotificationPermission(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(
@@ -96,118 +94,113 @@ private fun hasNotificationPermission(context: Context): Boolean {
     } else true
 }
 
-// -------------------------------------------------
-// Tiny domain helpers for weather strings (unchanged logic)
-// -------------------------------------------------
-private fun getAirState(rh: Int, dewpt: Double): String = when {
-    rh < 30 && dewpt < 10 -> "Very Dry"
-    rh < 40 && dewpt < 15 -> "Dry"
-    rh in 40..60 && dewpt >= 10 -> "Moderate Humidity"
-    else -> "Humid"
+// ─── Weather presentation helpers ────────────────────────────────────────────
+
+/**
+ * Derives a human-readable air-quality label from relative humidity and
+ * dew-point. Note: humidity is now Double (backend returns fractional %).
+ */
+private fun getAirState(rh: Double, dewpt: Double): String = when {
+    rh < 30.0 && dewpt < 10.0              -> "Very Dry"
+    rh < 40.0 && dewpt < 15.0              -> "Dry"
+    rh >= 40.0 && rh <= 60.0 && dewpt >= 10.0 -> "Moderate Humidity"
+    else                                   -> "Humid"
 }
 
+/** Maps a wind direction in degrees to a compass label. */
 private fun getWindDirection(windDir: Int): String {
-    val directions = listOf("North", "Northeast", "East", "Southeast", "South", "Southwest", "West", "Northwest")
+    val directions = listOf("North", "Northeast", "East", "Southeast",
+                            "South", "Southwest", "West", "Northwest")
     return directions[(Math.round(windDir / 45.0) % 8).toInt()]
 }
 
+/** Derives a cloud-coverage label from cloud percentage. */
 private fun getCloudCoverage(clouds: Int): String = when {
-    clouds == 0 -> "Clear Sky"
-    clouds < 30 -> "Partly Cloudy"
-    clouds < 70 -> "Mostly Cloudy"
-    else -> "Overcast"
+    clouds == 0   -> "Clear Sky"
+    clouds < 30   -> "Partly Cloudy"
+    clouds < 70   -> "Mostly Cloudy"
+    else          -> "Overcast"
 }
 
+/** Derives a time-of-day label from a 24-hour value. */
 private fun getTimeOfDay(hour: Int): String = when (hour) {
-    in 5..11 -> "Morning"
+    in 5..11  -> "Morning"
     in 12..16 -> "Afternoon"
     in 17..19 -> "Evening"
-    else -> "Night"
+    else      -> "Night"
 }
 
-// -------------------------------------------------
-// Composable: PredictionScreen
-// -------------------------------------------------
+// ─── Main composable ─────────────────────────────────────────────────────────
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
     val context = LocalContext.current
 
-    // Global UI flags
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isMonitoring by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) }
+    var isLoading    by remember { mutableStateOf(false) }
 
-    // Ask for POST_NOTIFICATIONS at runtime when needed
+    // Runtime permission launcher for POST_NOTIFICATIONS
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
-        Log.d(TAG, "POST_NOTIFICATIONS permission result -> granted=$granted")
+        Log.d(TAG, "POST_NOTIFICATIONS granted=$granted")
         if (!granted) Toast.makeText(context, "Enable notifications to monitor", Toast.LENGTH_SHORT).show()
     }
 
-    // Restore persisted state once
+    // Restore persisted state on first composition
     LaunchedEffect(Unit) {
-        Log.d(TAG, "Restore from cache: start")
         viewModel.restoreFromCache()
         isMonitoring = CacheManager.isMonitoring()
-        Log.d(TAG, "Restore from cache: isMonitoring=$isMonitoring")
+        Log.d(TAG, "Cache restored — isMonitoring=$isMonitoring")
     }
 
-    // ------------------------------
-    // BroadcastReceiver: single instance, scoped lifecycle
-    // ------------------------------
+    // ─── BroadcastReceiver (scoped to composition) ────────────────────────────
     DisposableEffect(Unit) {
         Log.d(TAG, "Registering BroadcastReceiver")
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent == null) return
                 when (intent.action) {
+
                     RealTimeMonitoringContract.ACTION_STATUS -> {
                         val status = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_STATUS)
-                        Log.d(TAG, "ACTION_STATUS -> $status")
+                        Log.d(TAG, "ACTION_STATUS → $status")
                         isMonitoring = status == "started"
-                        isLoading = status == "started"
+                        isLoading    = status == "started"
                     }
+
                     RealTimeMonitoringContract.ACTION_LATEST_IMAGE -> {
                         val base64 = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_DATA)
                         if (base64 != null) {
-                            Log.d(TAG, "ACTION_LATEST_IMAGE -> success (len=${base64.length})")
+                            Log.d(TAG, "ACTION_LATEST_IMAGE → len=${base64.length}")
                             viewModel.updateLatestImageState(base64)
                         } else {
                             val err = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_ERROR)
-                            Log.w(TAG, "ACTION_LATEST_IMAGE -> error=$err")
+                            Log.w(TAG, "ACTION_LATEST_IMAGE error → $err")
                             viewModel.setLatestImageError(err ?: "Unknown image error")
                         }
                     }
-                    RealTimeMonitoringContract.ACTION_REVERSE_GEOCODE -> {
-                        val reverseJson = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_DATA)
-                        if (reverseJson != null) {
-                            Log.d(TAG, "ACTION_REVERSE_GEOCODE -> success")
-                            viewModel.updateReverseGeocodeState(reverseJson)
-                        } else {
-                            val err = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_ERROR)
-                            Log.w(TAG, "ACTION_REVERSE_GEOCODE -> error=$err")
-                            viewModel.setReverseGeocodeError(err ?: "Unknown reverse geocode error")
-                        }
-                    }
+
                     RealTimeMonitoringContract.ACTION_PREDICT_FLOOD -> {
                         isLoading = false
                         val predictJson = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_DATA)
                         if (predictJson != null) {
-                            Log.d(TAG, "ACTION_PREDICT_FLOOD -> success")
+                            Log.d(TAG, "ACTION_PREDICT_FLOOD → success")
                             viewModel.updatePredictFloodState(predictJson)
                             errorMessage = null
                         } else {
                             val err = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_ERROR)
-                            Log.e(TAG, "ACTION_PREDICT_FLOOD -> error=$err")
+                            Log.e(TAG, "ACTION_PREDICT_FLOOD error → $err")
                             viewModel.setPredictFloodError(err ?: "Unknown prediction error")
                         }
                     }
+
                     RealTimeMonitoringContract.ACTION_ERROR -> {
-                        isLoading = false
-                        val err = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_ERROR)
-                        Log.e(TAG, "ACTION_ERROR -> $err")
+                        isLoading    = false
+                        val err      = intent.getStringExtra(RealTimeMonitoringContract.EXTRA_ERROR)
+                        Log.e(TAG, "ACTION_ERROR → $err")
                         errorMessage = err ?: "Unknown monitoring error"
                     }
                 }
@@ -217,11 +210,9 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
         val filter = IntentFilter().apply {
             addAction(RealTimeMonitoringContract.ACTION_STATUS)
             addAction(RealTimeMonitoringContract.ACTION_LATEST_IMAGE)
-            addAction(RealTimeMonitoringContract.ACTION_REVERSE_GEOCODE)
             addAction(RealTimeMonitoringContract.ACTION_PREDICT_FLOOD)
             addAction(RealTimeMonitoringContract.ACTION_ERROR)
         }
-        // RECEIVER_EXPORTED is fine as Service is your process; adjust if you scope it differently
         context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         onDispose {
             Log.d(TAG, "Unregistering BroadcastReceiver")
@@ -229,26 +220,23 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
         }
     }
 
-    // ------------------------------
-    // Observe ViewModel state flows
-    // ------------------------------
-    val latestImageState by viewModel.latestImageState.collectAsState()
-    val reverseGeocodeState by viewModel.reverseGeocodeState.collectAsState()
+    // ─── State collection ─────────────────────────────────────────────────────
+    val latestImageState  by viewModel.latestImageState.collectAsState()
     val predictFloodState by viewModel.predictFloodState.collectAsState()
-    val countdown by viewModel.countdown.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val countdown         by viewModel.countdown.collectAsState()
+    val isRefreshing      by viewModel.isRefreshing.collectAsState()
 
-    // Log state transitions for deep debugging
-    LaunchedEffect(latestImageState) { Log.d(TAG, "latestImageState -> $latestImageState"); if (latestImageState is ApiState.Success) viewModel.resetCountdown() }
-    LaunchedEffect(reverseGeocodeState) { Log.d(TAG, "reverseGeocodeState -> $reverseGeocodeState") }
-    LaunchedEffect(predictFloodState) { Log.d(TAG, "predictFloodState -> $predictFloodState") }
+    LaunchedEffect(latestImageState) {
+        Log.d(TAG, "latestImageState → $latestImageState")
+        if (latestImageState is ApiState.Success) viewModel.resetCountdown()
+    }
+    LaunchedEffect(predictFloodState) { Log.d(TAG, "predictFloodState → $predictFloodState") }
 
-    // Countdown: runs only while monitoring
+    // Countdown loop (runs while monitoring is active)
     LaunchedEffect(isMonitoring) {
-        Log.d(TAG, "isMonitoring changed -> $isMonitoring (start countdown loop if true)")
         if (isMonitoring) {
             while (isMonitoring) {
-                delay(1000)
+                delay(1_000)
                 if (!isRefreshing && countdown > 0) {
                     viewModel.decrementCountdown()
                     if (countdown == 1) viewModel.setRefreshing()
@@ -259,72 +247,78 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
         }
     }
 
-    // Extract success data
-    val imageBase64 = (latestImageState as? ApiState.Success)?.data?.imageBase64
-    val predictFloodData = (predictFloodState as? ApiState.Success)?.data
-    predictFloodData?.let { Log.d(TAG, "PredictFloodData -> ${it.prediction.flood_risk}") }
+    // ─── Derived presentation data ────────────────────────────────────────────
 
-    // Derived presentation model
-    val predictionData by remember(predictFloodState, reverseGeocodeState) {
+    val imageBase64 = (latestImageState as? ApiState.Success)?.data?.imageBase64
+
+    /**
+     * Build PredictionData from the flood response.
+     * Location (city, address) is now taken from PredictFloodResponse.location
+     * — no separate reverseGeocodeState needed.
+     */
+    val predictionData by remember(predictFloodState) {
         derivedStateOf {
-            if (predictFloodState is ApiState.Success && reverseGeocodeState is ApiState.Success) {
-                val flood = (predictFloodState as ApiState.Success).data
-                val reverse = (reverseGeocodeState as ApiState.Success).data
-                val blockageChance = if (flood.drain_blockage == 1) {
-                    (1 - flood.drain_blockage_prob) * 100
-                } else {
-                    flood.drain_blockage_prob * 100
-                }
-                val formattedChance = String.format("%.2f", blockageChance)
+            (predictFloodState as? ApiState.Success)?.data?.let { flood ->
+                val blockage      = flood.drain_blockage ?: 2
+                val blockageProb  = flood.drain_blockage_prob ?: 0.0
+                // If blockage == 1 (No blockage), chance = 1 - prob; else use prob directly
+                val blockageChance = if (blockage == 1) (1 - blockageProb) * 100 else blockageProb * 100
                 PredictionData(
-                    floodRisk = flood.prediction.flood_risk,
-                    reason = flood.prediction.reason,
-                    drainBlockageProb = formattedChance,
-                    drainBlockage = flood.drain_blockage,
-                    city = reverse.city,
-                    address = reverse.address
+                    floodRisk        = flood.prediction.flood_risk,
+                    reason           = flood.prediction.reason,
+                    drainBlockageProb = String.format("%.2f", blockageChance),
+                    drainBlockage    = blockage,
+                    city             = flood.location.city,
+                    address          = flood.location.address
                 )
-            } else null
+            }
         }
     }
 
+    /**
+     * Map WeatherInfo (network model) → WeatherData (UI model).
+     * Uses device's current hour for timeOfDay since the new backend weather
+     * model no longer includes an "hour" field.
+     */
     val weatherData = (predictFloodState as? ApiState.Success)?.data?.let { f ->
         WeatherData(
-            temp = f.weather_data.temp,
-            appTemp = f.weather_data.app_temp,
-            humidity = f.weather_data.rh,
-            windSpeed = f.weather_data.wind_spd,
-            uv = f.weather_data.uv,
-            pressure = f.weather_data.pres,
-            visibility = f.weather_data.vis.toDouble(),
-            weatherCondition = f.weather_prediction.weather,
-            precipitation = f.weather_prediction.precip,
-            airState = getAirState(f.weather_data.rh, f.weather_data.dewpt),
-            windDirection = getWindDirection(f.weather_data.wind_dir),
-            cloudCoverage = getCloudCoverage(f.weather_data.clouds),
-            timeOfDay = getTimeOfDay(f.weather_data.hour)
+            temp             = f.weather.temp,
+            appTemp          = f.weather.app_temp,
+            humidity         = f.weather.humidity,
+            windSpeed        = f.weather.wind_speed,
+            uv               = f.weather.uv,
+            pressure         = f.weather.pressure,
+            visibility       = f.weather.visibility,
+            weatherCondition = f.weather.condition,
+            precipitation    = f.weather.precipitation,
+            airState         = getAirState(f.weather.humidity, f.weather.dewpt),
+            windDirection    = getWindDirection(f.weather.wind_dir),
+            cloudCoverage    = getCloudCoverage(f.weather.clouds),
+            timeOfDay        = getTimeOfDay(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
         )
     }
 
-    val isApiLoading = predictFloodState is ApiState.Loading || reverseGeocodeState is ApiState.Loading
+    val isApiLoading = predictFloodState is ApiState.Loading
 
-    // UI state
-    var isManualMode by rememberSaveable { mutableStateOf(false) }
+    // UI-only state
+    var isManualMode  by rememberSaveable { mutableStateOf(false) }
     var selectedImage by remember { mutableStateOf<MultipartBody.Part?>(null) }
-    var shapData by remember { mutableStateOf<List<ShapData>>(emptyList()) }
-    var longitude by rememberSaveable { mutableStateOf("0.1276") }
-    var latitude by rememberSaveable { mutableStateOf("51.5072") }
+    var shapData      by remember { mutableStateOf<List<ShapData>>(emptyList()) }
 
-    // Map SHAP values whenever prediction updates
+    // Default to Mumbai coordinates
+    var longitude by rememberSaveable { mutableStateOf(AppConfig.UI.DEFAULT_LONGITUDE_STR) }
+    var latitude  by rememberSaveable { mutableStateOf(AppConfig.UI.DEFAULT_LATITUDE_STR) }
+
+    // Update SHAP list whenever prediction changes
     LaunchedEffect(predictFloodState) {
-        val successData = (predictFloodState as? ApiState.Success)?.data
-        shapData = successData?.weather_shap_value?.map { ShapData(it.feature, it.value.toFloat()) } ?: emptyList()
-        if (shapData.isNotEmpty()) Log.d(TAG, "SHAP updated -> ${shapData.size} items")
+        shapData = (predictFloodState as? ApiState.Success)?.data
+            ?.weather_shap_value
+            ?.map { ShapData(it.feature, it.value.toFloat()) }
+            ?: emptyList()
+        Log.d(TAG, "SHAP updated — ${shapData.size} items")
     }
 
-    // ------------------------------
-    // Composed UI
-    // ------------------------------
+    // ─── UI ───────────────────────────────────────────────────────────────────
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedBackground()
         FrostedCardContainer {
@@ -338,61 +332,63 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
                 PredictionHeader()
                 Spacer(Modifier.height(20.dp))
 
-                // Mode toggle + clear cache
+                // Mode toggle
                 ModeToggle(isManualMode = isManualMode) {
                     isManualMode = !isManualMode
                     viewModel.resetPredictionStates()
                     shapData = emptyList()
                     CacheManager.clearAll()
-                    Log.d(TAG, "Mode toggled -> manual=$isManualMode (states cleared)")
+                    Log.d(TAG, "Mode toggled → manual=$isManualMode (states cleared)")
                 }
 
                 Spacer(Modifier.height(24.dp))
 
                 CoordinatesInputs(
-                    longitude = longitude,
-                    latitude = latitude,
-                    readOnly = !isManualMode,
+                    longitude  = longitude,
+                    latitude   = latitude,
+                    readOnly   = !isManualMode,
                     onLongitude = { if (isManualMode) longitude = it },
-                    onLatitude = { if (isManualMode) latitude = it }
+                    onLatitude  = { if (isManualMode) latitude = it }
                 )
 
                 Spacer(Modifier.height(20.dp))
 
-                // Live vs Manual image section
                 if (isManualMode) {
                     ImageUpload(
                         onImageSelected = {
                             selectedImage = it
-                            Log.d(TAG, "Image selected -> ${it != null}")
-                            Toast.makeText(context, if (it != null) "Image selected" else "Image cleared", Toast.LENGTH_SHORT).show()
+                            Log.d(TAG, "Image selected → ${it != null}")
+                            Toast.makeText(context,
+                                if (it != null) "Image selected" else "Image cleared",
+                                Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else {
                     LiveFeed(
-                        isStreaming = isMonitoring,
-                        countdown = countdown,
+                        isStreaming  = isMonitoring,
+                        countdown    = countdown,
                         isRefreshing = isRefreshing,
-                        imageBase64 = imageBase64,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
+                        imageBase64  = imageBase64,
+                        modifier     = Modifier.fillMaxWidth().height(220.dp)
                     )
                 }
 
                 Spacer(Modifier.height(24.dp))
 
-                // Action buttons
                 if (isManualMode) {
                     ManualPredictionButton(
-                        enabled = !isApiLoading,
+                        enabled   = !isApiLoading,
                         onPredict = {
-                            Log.d(TAG, "Manual Predict clicked | hasImage=${selectedImage != null}")
+                            Log.d(TAG, "Manual predict clicked | hasImage=${selectedImage != null}")
                             if (selectedImage != null) {
-                                val req = PredictFloodRequest(lon = longitude.toDouble(), lat = latitude.toDouble())
-                                viewModel.predictFlood(selectedImage!!, req)
-                                viewModel.fetchReverseGeocode(latitude.toDouble(), longitude.toDouble())
+                                viewModel.predictFlood(
+                                    selectedImage!!,
+                                    PredictFloodRequest(
+                                        lon = longitude.toDouble(),
+                                        lat = latitude.toDouble()
+                                    )
+                                )
                             } else {
                                 errorMessage = "Please select an image before predicting"
                                 Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
@@ -402,33 +398,40 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
                 } else {
                     RealTimeMonitoringButton(
                         isMonitoring = isMonitoring,
-                        isLoading = isLoading,
+                        isLoading    = isLoading,
                         onStart = start@{
                             isLoading = true
                             Log.d(TAG, "Start Monitoring clicked")
 
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isInternetAvailable(context)) {
+                            // Internet guard
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                                !isInternetAvailable(context)) {
                                 errorMessage = "No internet connection"
                                 isLoading = false
                                 Log.w(TAG, "Start blocked: no internet")
                                 return@start
                             }
 
-                            // Inline permission check keeps lint happy
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission(context)) {
-                                Log.w(TAG, "POST_NOTIFICATIONS missing -> requesting")
+                            // Notification permission guard
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !hasNotificationPermission(context)) {
+                                Log.w(TAG, "POST_NOTIFICATIONS missing — requesting")
                                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 isLoading = false
                                 return@start
                             }
 
-                            val intent = Intent(context, RealTimeMonitoringService::class.java)
+                            // Start the foreground service with coordinates
+                            val intent = Intent(context, RealTimeMonitoringService::class.java).apply {
+                                putExtra("latitude",  latitude.toDoubleOrNull()  ?: AppConfig.Monitoring.DEFAULT_LATITUDE)
+                                putExtra("longitude", longitude.toDoubleOrNull() ?: AppConfig.Monitoring.DEFAULT_LONGITUDE)
+                            }
                             ContextCompat.startForegroundService(context, intent)
                         },
                         onStop = {
                             Log.d(TAG, "Stop Monitoring clicked")
                             context.stopService(Intent(context, RealTimeMonitoringService::class.java))
-                            isLoading = false
+                            isLoading    = false
                             isMonitoring = false
                             CacheManager.clearAll()
                         }
@@ -437,67 +440,54 @@ fun PredictionScreen(viewModel: FloodViewModel = viewModel()) {
 
                 Spacer(Modifier.height(24.dp))
 
-                // Error area (prediction / reverse geocode / local)
+                // Error display
                 ErrorSection(
                     predictState = predictFloodState,
-                    reverseState = reverseGeocodeState,
                     errorMessage = errorMessage,
                     onRetryPredict = {
-                        (predictFloodState as? ApiState.Error)?.let {
-                            if (selectedImage != null) {
-                                val req = PredictFloodRequest(lon = longitude.toDouble(), lat = latitude.toDouble())
-                                viewModel.predictFlood(selectedImage!!, req)
-                            }
-                        }
-                    },
-                    onRetryReverse = {
-                        if (reverseGeocodeState is ApiState.Error) {
-                            viewModel.fetchReverseGeocode(latitude.toDouble(), longitude.toDouble())
+                        if (selectedImage != null) {
+                            viewModel.predictFlood(
+                                selectedImage!!,
+                                PredictFloodRequest(longitude.toDouble(), latitude.toDouble())
+                            )
                         }
                     },
                     clearLocalError = { errorMessage = null }
                 )
 
-                // Data cards
+                // Result cards
                 predictionData?.let { PredictionCard(prediction = it); Spacer(Modifier.height(20.dp)) }
-                weatherData?.let { WeatherCard(weather = it); Spacer(Modifier.height(20.dp)) }
+                weatherData?.let    { WeatherCard(weather = it);        Spacer(Modifier.height(20.dp)) }
                 if (shapData.isNotEmpty()) { ShapChart(data = shapData); Spacer(Modifier.height(20.dp)) }
             }
         }
     }
 }
 
-// -------------------------------------------------
-// UI building blocks (modular composables)
-// -------------------------------------------------
+// ─── Frosted card container ───────────────────────────────────────────────────
+
 @Composable
 private fun FrostedCardContainer(content: @Composable () -> Unit) {
     Card(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        shape = RoundedCornerShape(28.dp)
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        colors   = CardDefaults.cardColors(containerColor = Color.Transparent),
+        elevation = CardDefaults.cardElevation(0.dp),
+        shape    = RoundedCornerShape(28.dp)
     ) {
         Box(
             modifier = Modifier
                 .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.18f),
-                            Color.White.copy(alpha = 0.08f)
-                        )
-                    )
+                    Brush.verticalGradient(listOf(
+                        Color.White.copy(alpha = 0.18f),
+                        Color.White.copy(alpha = 0.08f)
+                    ))
                 )
                 .border(
                     width = 1.5.dp,
-                    brush = Brush.linearGradient(
-                        listOf(
-                            Color.White.copy(alpha = 0.5f),
-                            Color.White.copy(alpha = 0.15f)
-                        )
-                    ),
+                    brush = Brush.linearGradient(listOf(
+                        Color.White.copy(alpha = 0.5f),
+                        Color.White.copy(alpha = 0.15f)
+                    )),
                     shape = RoundedCornerShape(28.dp)
                 )
                 .padding(20.dp)
@@ -505,78 +495,60 @@ private fun FrostedCardContainer(content: @Composable () -> Unit) {
     }
 }
 
+// ─── Coordinates input ────────────────────────────────────────────────────────
+
 @Composable
 private fun CoordinatesInputs(
-    longitude: String,
-    latitude: String,
+    longitude: String, latitude: String,
     readOnly: Boolean,
     onLongitude: (String) -> Unit,
     onLatitude: (String) -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        CustomTextField(
-            value = longitude,
-            onValueChange = onLongitude,
-            label = "Longitude",
-            readOnly = readOnly,
-            modifier = Modifier.weight(1f)
-        )
-        CustomTextField(
-            value = latitude,
-            onValueChange = onLatitude,
-            label = "Latitude",
-            readOnly = readOnly,
-            modifier = Modifier.weight(1f)
-        )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        CustomTextField(longitude, onLongitude, "Longitude", readOnly, Modifier.weight(1f))
+        CustomTextField(latitude,  onLatitude,  "Latitude",  readOnly, Modifier.weight(1f))
     }
 }
+
+// ─── Error section ────────────────────────────────────────────────────────────
 
 @Composable
 private fun ErrorSection(
     predictState: ApiState<PredictFloodResponse>,
-    reverseState: ApiState<ReverseGeocodeResponse>,
     errorMessage: String?,
     onRetryPredict: () -> Unit,
-    onRetryReverse: () -> Unit,
     clearLocalError: () -> Unit
 ) {
     val predictError = (predictState as? ApiState.Error)?.message?.let { "Prediction Error: $it" }
-    val reverseError = (reverseState as? ApiState.Error)?.message?.let { "Reverse Geocode Error: $it" }
-    val toShow = predictError ?: reverseError ?: errorMessage
+    val toShow       = predictError ?: errorMessage
 
     if (toShow != null) {
-        Log.e(TAG, "Error UI -> $toShow")
+        Log.e(TAG, "Error UI → $toShow")
         ErrorDisplay(
-            error = toShow,
+            error   = toShow,
             onRetry = {
                 clearLocalError()
-                if (predictError != null) onRetryPredict() else if (reverseError != null) onRetryReverse()
+                if (predictError != null) onRetryPredict()
             }
         )
     }
 }
 
-// -------------------------------------------------
-// Reusable Buttons (unchanged UI, cleaned internals)
-// -------------------------------------------------
+// ─── Buttons ──────────────────────────────────────────────────────────────────
+
 @Composable
 private fun GradientButton(
     text: String,
     gradientColors: List<Color>,
     isLoading: Boolean,
     showResumeIcon: Boolean = false,
-    showPauseIcon: Boolean = false,
+    showPauseIcon: Boolean  = false,
     onClick: () -> Unit
 ) {
     Button(
-        onClick = { if (!isLoading) onClick() },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+        onClick  = { if (!isLoading) onClick() },
+        modifier = Modifier.fillMaxWidth().height(50.dp),
+        colors   = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
         contentPadding = PaddingValues()
     ) {
         Box(
@@ -589,9 +561,9 @@ private fun GradientButton(
                 CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (showResumeIcon) Icon(Icons.Default.PlayArrow, contentDescription = "Start Monitoring", tint = Color.White, modifier = Modifier.size(20.dp).padding(end = 6.dp))
-                    if (showPauseIcon) Icon(Icons.Default.Stop, contentDescription = "Stop Monitoring", tint = Color.White, modifier = Modifier.size(20.dp).padding(end = 6.dp))
-                    Text(text = text, color = Color.White)
+                    if (showResumeIcon) Icon(Icons.Default.PlayArrow, "Start", tint = Color.White, modifier = Modifier.size(20.dp).padding(end = 6.dp))
+                    if (showPauseIcon)  Icon(Icons.Default.Stop,      "Stop",  tint = Color.White, modifier = Modifier.size(20.dp).padding(end = 6.dp))
+                    Text(text, color = Color.White)
                 }
             }
         }
@@ -599,23 +571,17 @@ private fun GradientButton(
 }
 
 @Composable
-private fun ManualPredictionButton(
-    enabled: Boolean,
-    onPredict: suspend () -> Unit
-) {
+private fun ManualPredictionButton(enabled: Boolean, onPredict: suspend () -> Unit) {
     var isLoading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
+    val scope     = rememberCoroutineScope()
     GradientButton(
-        text = if (!enabled) "Predicting..." else "Get Prediction",
+        text           = if (!enabled) "Predicting…" else "Get Prediction",
         gradientColors = listOf(Color(0xFF34D399), Color(0xFF10B981)),
-        isLoading = !enabled,
-        onClick = {
+        isLoading      = !enabled,
+        onClick        = {
             if (enabled && !isLoading) {
                 isLoading = true
-                scope.launch {
-                    try { onPredict() } finally { isLoading = false }
-                }
+                scope.launch { try { onPredict() } finally { isLoading = false } }
             }
         }
     )
@@ -629,25 +595,26 @@ private fun RealTimeMonitoringButton(
     onStop: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-
     GradientButton(
         text = when {
-            isLoading -> "Starting..."
+            isLoading    -> "Starting…"
             isMonitoring -> "Stop Real-time Monitoring"
-            else -> "Start Real-time Monitoring"
+            else         -> "Start Real-time Monitoring"
         },
-        gradientColors = if (isMonitoring) listOf(Color(0xFFFF6B6B), Color(0xFFE63946)) else listOf(Color(0xFF3B82F6), Color(0xFF6366F1)),
-        isLoading = isLoading,
+        gradientColors = if (isMonitoring)
+            listOf(Color(0xFFFF6B6B), Color(0xFFE63946))
+        else
+            listOf(Color(0xFF3B82F6), Color(0xFF6366F1)),
+        isLoading      = isLoading,
         showResumeIcon = !isMonitoring && !isLoading,
-        showPauseIcon = isMonitoring && !isLoading
+        showPauseIcon  = isMonitoring  && !isLoading
     ) {
         if (isMonitoring) onStop() else scope.launch { onStart() }
     }
 }
 
-// -------------------------------------------------
-// Styled text field wrapper (unchanged behavior, just grouped here)
-// -------------------------------------------------
+// ─── Text field ───────────────────────────────────────────────────────────────
+
 @Composable
 private fun CustomTextField(
     value: String,
@@ -657,19 +624,19 @@ private fun CustomTextField(
     modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
-        value = value,
+        value         = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
-        readOnly = readOnly,
-        modifier = modifier,
-        singleLine = true,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color(0xFF6366F1),
+        label         = { Text(label) },
+        readOnly      = readOnly,
+        modifier      = modifier,
+        singleLine    = true,
+        colors        = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor   = Color(0xFF6366F1),
             unfocusedBorderColor = Color(0xFFCBD5E1),
-            disabledBorderColor = Color.Gray,
-            errorBorderColor = Color.Red,
-            focusedLabelColor = Color(0xFF6366F1),
-            unfocusedLabelColor = Color(0xFFCBD5E1)
+            disabledBorderColor  = Color.Gray,
+            errorBorderColor     = Color.Red,
+            focusedLabelColor    = Color(0xFF6366F1),
+            unfocusedLabelColor  = Color(0xFFCBD5E1)
         )
     )
 }

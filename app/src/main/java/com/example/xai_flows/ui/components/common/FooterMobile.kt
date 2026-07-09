@@ -1,3 +1,12 @@
+/**
+ * FooterMobile.kt
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Full-width footer rendered at the bottom of scrollable screens.
+ *
+ * [onNavigate] is forwarded to [FooterSectionComponent] so that in-app routes
+ * (/, /predictions, /analytics) trigger local navigation instead of opening
+ * the browser.
+ */
 package com.example.xai_flows.ui.components.common
 
 import androidx.compose.foundation.background
@@ -21,7 +30,10 @@ import com.example.xai_flows.ui.models.SOCIAL_LINKS
 
 @Preview(showBackground = true)
 @Composable
-fun FooterMobile() {
+fun FooterMobile(
+    /** Called with the route string (e.g. "/predictions") when an in-app link is tapped. */
+    onNavigate: (String) -> Unit = {}
+) {
     Box(
         modifier = Modifier
             .wrapContentHeight()
@@ -34,15 +46,15 @@ fun FooterMobile() {
         Column(
             modifier = Modifier
                 .wrapContentHeight()
-                .padding(horizontal = 16.dp, vertical = 20.dp), // reduced bottom padding
+                .padding(horizontal = 16.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 1. Top: Company Info
+            // 1. Company Info + subscribe form
             CompanyInfoComponent()
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 2. Row: Contact Info
+            // 2. Contact Info (email / phone / address — all tappable)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -54,42 +66,38 @@ fun FooterMobile() {
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 3. Row: Platform + Company
+            // 3. Platform + Company sections
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    FooterSectionComponent(FOOTER_SECTIONS[0]) // Platform
+                    FooterSectionComponent(FOOTER_SECTIONS[0], onNavigate) // Platform
                 }
-
                 Column(modifier = Modifier.weight(1f)) {
-                    FooterSectionComponent(FOOTER_SECTIONS[1]) // Company
+                    FooterSectionComponent(FOOTER_SECTIONS[1], onNavigate) // Company
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 4. Row: Support + Legal
+            // 4. Support + Legal sections
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    FooterSectionComponent(FOOTER_SECTIONS[2]) // Support
+                    FooterSectionComponent(FOOTER_SECTIONS[2], onNavigate) // Support
                 }
-
                 Column(modifier = Modifier.weight(1f)) {
-                    FooterSectionComponent(FOOTER_SECTIONS[3]) // Legal
+                    FooterSectionComponent(FOOTER_SECTIONS[3], onNavigate) // Legal
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 5. Social Links + Copyright
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+            // 5. Social icons + copyright
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -98,16 +106,13 @@ fun FooterMobile() {
                         SocialIconComponent(social)
                     }
                 }
-
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} ${COMPANY_INFO.name}. All rights reserved.",
-                    color = Color(0xFF9CA3AF),
+                    text     = "© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} ${COMPANY_INFO.name}. All rights reserved.",
+                    color    = Color(0xFF9CA3AF),
                     fontSize = 10.sp
                 )
             }
         }
     }
 }
-
-

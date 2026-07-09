@@ -46,7 +46,10 @@ val conclusionInsights = listOf(
 )
 
 @Composable
-fun AnalyticsScreen() {
+fun AnalyticsScreen(
+    /** Forwarded to FooterMobile for in-app section link navigation. */
+    onNavigate: (String) -> Unit = {}
+) {
     // Data (replace with real drawable resources)
     val analyticsData = listOf(
         Metric(
@@ -177,7 +180,7 @@ fun AnalyticsScreen() {
             }
 
             // Footer Section
-            FooterMobile()
+            FooterMobile(onNavigate = onNavigate)
         }
 
         // Image Modal (overlay)

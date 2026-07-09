@@ -1,57 +1,64 @@
-# 🔹 Gradle
+# ─── Gradle ───────────────────────────────────────────────────────────────────
 .gradle/
 build/
 **/build/
 
-# 🔹 Kotlin cache
+# ─── Kotlin cache ─────────────────────────────────────────────────────────────
 .kotlin/
 
-# 🔹 Local config (IMPORTANT)
-local.properties
+# ─── Local machine config (NEVER commit these) ────────────────────────────────
+local.properties          # SDK path — differs per machine
+secrets.properties        # If you add API keys here in future
+*.env                     # Any .env variants
 
-# 🔹 Android Studio
+# ─── Android Studio / IntelliJ ────────────────────────────────────────────────
 .idea/
 *.iml
 *.ipr
 *.iws
 
-# 🔹 OS files
+# ─── OS files ─────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# 🔹 APK / AAB
+# ─── Build outputs ────────────────────────────────────────────────────────────
 *.apk
 *.aab
-
-# 🔹 Logs
-*.log
-hs_err_pid*
-
-# 🔹 Generated files
 captures/
 .externalNativeBuild/
 .cxx/
-
-# 🔹 Java/Kotlin
-*.class
-*.jar
-
-# 🔹 Keystore (CRITICAL)
-*.jks
-*.keystore
-
-# 🔹 Firebase
-google-services.json
-
-# 🔹 NDK
 obj/
 lib/
 
-# 🔹 Navigation
+# ─── JVM crash logs ───────────────────────────────────────────────────────────
+hs_err_pid*
+*.log
+
+# ─── Java/Kotlin bytecode ─────────────────────────────────────────────────────
+*.class
+*.jar
+
+# ─── Keystores (CRITICAL — never commit signing keys) ─────────────────────────
+*.jks
+*.keystore
+release-keystore/
+keystore/
+
+# ─── Firebase ─────────────────────────────────────────────────────────────────
+google-services.json
+
+# ─── NDK ──────────────────────────────────────────────────────────────────────
+obj/
+lib/
+
+# ─── Navigation generated ─────────────────────────────────────────────────────
 .navigation/
 
-# 🔹 Keep wrapper
-!gradle/wrapper/gradle-wrapper.jar
-
-# 🔹 Misc
+# ─── Test results / reports ───────────────────────────────────────────────────
+test-results/
 *.hprof
+
+# ─── Keep these (override above rules) ───────────────────────────────────────
+!gradle/wrapper/gradle-wrapper.jar
+!gradlew
+!gradlew.bat

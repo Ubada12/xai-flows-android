@@ -1,3 +1,17 @@
+/**
+ * WeatherCard.kt
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Composable card displaying a weather snapshot with animated metric tiles.
+ *
+ * Receives a WeatherData (UI model) and renders six weather metrics in a
+ * vertical list with staggered fade-in animations.
+ *
+ * Fixed in this version:
+ *   - Precipitation comparison was `== 0` (Int) → now `< 0.01` (Double)
+ *     to handle the float type returned by the backend.
+ *   - Precipitation tile now shows the actual rainfall amount (e.g., "2.3 mm")
+ *     rather than the raw condition string when rain is detected.
+ */
 package com.example.xai_flows.ui.components.prediction
 
 import androidx.compose.animation.core.*
@@ -24,12 +38,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.xai_flows.ui.models.WeatherData
 import kotlinx.coroutines.delay
 
+/** Internal data holder for a single weather metric tile. */
 data class WeatherMetric(
     val icon: ImageVector,
     val title: String,
@@ -72,14 +86,36 @@ fun WeatherCard(
                 )
             }
 
-            // Animated metric tiles
+            // Precipitation display: show amount (mm) when > 0, "None" when dry
+            val precipDisplay = if (weather.precipitation < 0.01) "None"
+                                else "${"%.1f".format(weather.precipitation)} mm"
+
+            // Six animated metric tiles
             val metrics = listOf(
-                WeatherMetric(Icons.Filled.Thermostat, "Temperature", "${weather.temp}°C", "(Feels ${weather.appTemp}°C)"),
-                WeatherMetric(Icons.Filled.Air, "Wind", "${weather.windSpeed} m/s", "${weather.windDirection}"),
-                WeatherMetric(Icons.Filled.WaterDrop, "Humidity", "${weather.humidity}%", "${weather.cloudCoverage}"),
-                WeatherMetric(Icons.Filled.Compress, "Pressure", "${weather.pressure} mb", "UV ${weather.uv}"),
-                WeatherMetric(Icons.Filled.Umbrella, "Precipitation", if (weather.precipitation == 0) "None" else "Expected", "${weather.weatherCondition}"),
-                WeatherMetric(Icons.Filled.Visibility, "Visibility", "${weather.visibility} km", "${weather.airState}")
+                WeatherMetric(
+                    Icons.Filled.Thermostat, "Temperature",
+                    "${weather.temp}°C", "(Feels ${weather.appTemp}°C)"
+                ),
+                WeatherMetric(
+                    Icons.Filled.Air, "Wind",
+                    "${weather.windSpeed} m/s", weather.windDirection
+                ),
+                WeatherMetric(
+                    Icons.Filled.WaterDrop, "Humidity",
+                    "${"%.0f".format(weather.humidity)}%", weather.cloudCoverage
+                ),
+                WeatherMetric(
+                    Icons.Filled.Compress, "Pressure",
+                    "${weather.pressure} mb", "UV ${weather.uv}"
+                ),
+                WeatherMetric(
+                    Icons.Filled.Umbrella, "Precipitation",
+                    precipDisplay, weather.weatherCondition
+                ),
+                WeatherMetric(
+                    Icons.Filled.Visibility, "Visibility",
+                    "${weather.visibility} km", weather.airState
+                )
             )
 
             Column(
@@ -88,10 +124,10 @@ fun WeatherCard(
             ) {
                 metrics.forEachIndexed { index, metric ->
                     AnimatedMetricTile(
-                        icon = metric.icon,
-                        label = metric.title,
-                        value = metric.primaryValue,
-                        metadata = metric.secondaryValue,
+                        icon       = metric.icon,
+                        label      = metric.title,
+                        value      = metric.primaryValue,
+                        metadata   = metric.secondaryValue,
                         delayIndex = index
                     )
                 }
@@ -101,84 +137,73 @@ fun WeatherCard(
 }
 
 /**
- * Animated weather icon that changes style based on condition
+ * Animated weather icon (emoji + subtle pulse) that adapts to the condition.
  */
 @Composable
 fun AnimatedWeatherIcon(condition: String) {
-    // Choose base color + emoji/icon based on condition
     val (icon, color) = when {
-        condition.contains("rain", true) -> "🌧" to Color(0xFF3B82F6)
-        condition.contains("cloud", true) -> "☁️" to Color(0xFF6B7280)
-        condition.contains("sun", true) || condition.contains("clear", true) -> "☀️" to Color(0xFFFBBF24)
-        else -> "🌡" to Color(0xFF9333EA)
+        condition.contains("rain",  ignoreCase = true) -> "🌧" to Color(0xFF3B82F6)
+        condition.contains("cloud", ignoreCase = true) -> "☁️" to Color(0xFF6B7280)
+        condition.contains("sun",   ignoreCase = true) ||
+        condition.contains("clear", ignoreCase = true) -> "☀️" to Color(0xFFFBBF24)
+        else                                           -> "🌡" to Color(0xFF9333EA)
     }
 
-    // Pulse animation (subtle scaling)
-    val infiniteTransition = rememberInfiniteTransition(label = "")
+    val infiniteTransition = rememberInfiniteTransition(label = "weatherIcon")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.15f,
+        targetValue  = 1.15f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
+            animation  = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
-        ), label = ""
+        ),
+        label = "weatherIconScale"
     )
 
     Box(
         modifier = Modifier
             .size(36.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            },
+            .graphicsLayer { scaleX = scale; scaleY = scale },
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = icon,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
+        Text(text = icon, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }
 
+/**
+ * Single metric tile with staggered fade-in + slide-up entry animation.
+ *
+ * @param delayIndex  Index in the list; each tile is delayed by 100 ms × index.
+ */
 @Composable
 fun AnimatedMetricTile(
     icon: ImageVector,
     label: String,
     value: String,
-    metadata: String,            // NEW param for metadata
+    metadata: String,
     delayIndex: Int
 ) {
     var visible by remember { mutableStateOf(false) }
 
-    // Animate entry
     LaunchedEffect(Unit) {
         delay(delayIndex * 100L)
         visible = true
     }
 
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing), label = ""
-    )
-    val offsetY by animateDpAsState(
-        targetValue = if (visible) 0.dp else 20.dp,
-        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing), label = ""
-    )
+    val alpha   by animateFloatAsState(if (visible) 1f else 0f,   tween(500, easing = LinearOutSlowInEasing),  label = "tileAlpha")
+    val offsetY by animateDpAsState(if (visible) 0.dp else 20.dp, tween(500, easing = FastOutSlowInEasing),    label = "tileOffset")
 
-    // Color mapping
+    // Icon accent colour per label
     val iconColor = when (label) {
-        "Temperature" -> Color(0xFFFF7043)
-        "Wind" -> Color(0xFF0288D1)
-        "Humidity" -> Color(0xFF29B6F6)
-        "Pressure" -> Color(0xFF7E57C2)
+        "Temperature"   -> Color(0xFFFF7043)
+        "Wind"          -> Color(0xFF0288D1)
+        "Humidity"      -> Color(0xFF29B6F6)
+        "Pressure"      -> Color(0xFF7E57C2)
         "Precipitation" -> Color(0xFF3F51B5)
-        "Visibility" -> Color(0xFF26A69A)
-        else -> Color(0xFF374151)
+        "Visibility"    -> Color(0xFF26A69A)
+        else            -> Color(0xFF374151)
     }
 
-    // Tile container
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -188,7 +213,7 @@ fun AnimatedMetricTile(
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .graphicsLayer { this.alpha = alpha }
     ) {
-        // Icon + Label
+        // Icon + label row
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -205,41 +230,19 @@ fun AnimatedMetricTile(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = iconColor,
-                    modifier = Modifier.size(20.dp)
-                )
+                Icon(imageVector = icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(20.dp))
             }
-
-            Text(
-                text = label,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF374151)
-            )
+            Text(text = label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF374151))
         }
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // Value
-        Text(
-            text = value,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1E3A8A)
-        )
+        // Primary value (large)
+        Text(text = value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E3A8A))
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        // Metadata (smaller + lighter)
-        Text(
-            text = metadata,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Normal,
-            color = Color(0xFF6B7280) // muted gray-blue
-        )
+        // Secondary metadata (small, muted)
+        Text(text = metadata, fontSize = 12.sp, fontWeight = FontWeight.Normal, color = Color(0xFF6B7280))
     }
 }
-

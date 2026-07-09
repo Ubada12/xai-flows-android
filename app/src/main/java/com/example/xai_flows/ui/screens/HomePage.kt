@@ -17,7 +17,9 @@ import com.example.xai_flows.ui.components.home.*
 @Composable
 fun HomePage(
     modifier: Modifier = Modifier,
-    onNavigateToPredictions: () -> Unit = {}
+    onNavigateToPredictions: () -> Unit = {},
+    /** Forwarded to FooterMobile for in-app section link navigation. */
+    onNavigate: (String) -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
 
@@ -86,7 +88,7 @@ fun HomePage(
         }
 
         // Footer Section
-        FooterMobile()
+        FooterMobile(onNavigate = onNavigate)
     }
 }
 

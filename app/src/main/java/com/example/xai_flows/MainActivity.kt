@@ -1,3 +1,15 @@
+/**
+ * MainActivity.kt
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Single-activity entry point for XAI-FLOWS.
+ *
+ * Responsibilities:
+ *   - Install the splash screen
+ *   - Initialise CacheManager with application context
+ *   - Validate required runtime permissions (location + notifications)
+ *   - Render the top-level Compose scaffold with NavbarMobile
+ *   - Simple in-memory page routing: "home" | "predictions" | "analytics"
+ */
 package com.example.xai_flows
 
 import android.content.Intent
@@ -10,34 +22,32 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.example.xai_flows.ui.theme.XAIFLOWSTheme
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.example.xai_flows.core.cache.CacheManager
 import com.example.xai_flows.core.permissions.PermissionManager
 import com.example.xai_flows.ui.components.common.NavbarMobile
-import com.example.xai_flows.ui.screens.HomePage
-import androidx.compose.foundation.layout.*
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.runtime.SideEffect
-import com.google.accompanist.systemuicontroller.rememberSystemUiController
-import androidx.compose.ui.graphics.Color
 import com.example.xai_flows.ui.screens.AnalyticsScreen
+import com.example.xai_flows.ui.screens.HomePage
 import com.example.xai_flows.ui.screens.PredictionScreen
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import com.example.xai_flows.utils.CacheManager
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.example.xai_flows.ui.theme.XAIFLOWSTheme
+import com.google.accompanist.systemuicontroller.rememberSystemUiController
 
 class MainActivity : ComponentActivity() {
 
-    // Launcher for app settings — will trigger ONLY when user returns
+    /**
+     * Launched when the user returns from the app-settings screen.
+     * If permissions are still missing after returning, PermissionManager
+     * will exit the app gracefully.
+     */
     private val settingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        // Handle result after returning from settings
         PermissionManager.handleReturnFromSettings(this)
     }
 
@@ -45,57 +55,55 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // Initialise SharedPreferences cache before any composable runs
         CacheManager.init(this)
+
         enableEdgeToEdge()
+        setContent { XAIFLOWSTheme { MainScreen() } }
 
-        setContent {
-            XAIFLOWSTheme {
-                MainScreen()
-            }
-        }
-
-        // Validate permissions and redirect if needed
+        // Check required permissions; redirect to settings if any are missing
         PermissionManager.validateAllPermissions(
-            activity = this,
+            activity   = this,
             onRedirect = { redirectToSettings() }
         )
     }
 
-    /**
-     * Opens App Settings via launcher (clean flow)
-     */
+    /** Opens the app details screen in system Settings. */
     private fun redirectToSettings() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
-        }
-        settingsLauncher.launch(intent)
+        settingsLauncher.launch(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            }
+        )
     }
 }
+
+// ─── Top-level screen ─────────────────────────────────────────────────────────
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Preview
 @Composable
 fun MainScreen() {
-    // Controller to manage status bar color
+    // Tint the status bar to match the navbar dark background
     val systemUiController = rememberSystemUiController()
-    val statusBarColor = Color(0xFF0F172A) // Example: Dark blue/black gradient start color
-    val page = remember { mutableStateOf("home") }
-
     SideEffect {
-        // Set status bar color and icons contrast
         systemUiController.setStatusBarColor(
-            color = statusBarColor,
-            darkIcons = false // false = white icons, true = dark icons
+            color     = Color(0xFF0F172A),
+            darkIcons = false  // white icons on dark background
         )
     }
+
+    // Simple in-memory navigation state — no NavController overhead needed
+    val page = remember { mutableStateOf("home") }
 
     Scaffold(
         topBar = {
             Box(modifier = Modifier.statusBarsPadding()) {
                 NavbarMobile(
-                    onHomeClick = { page.value = "home" },
+                    onHomeClick        = { page.value = "home" },
                     onPredictionsClick = { page.value = "predictions" },
-                    onAnalyticsClick = { page.value = "analytics" }
+                    onAnalyticsClick   = { page.value = "analytics" }
                 )
             }
         },
@@ -106,28 +114,27 @@ fun MainScreen() {
                 .padding(innerPadding)
                 .fillMaxSize()
         ) {
-            // Scrollable HomePage - occupies all remaining space
-            Box(
-                modifier = Modifier
-                    .weight(1f)      // Fill remaining height
-                    .fillMaxWidth()
-            ) {
-                if (page.value == "home") {
-                    HomePage(
-                        modifier = Modifier.fillMaxSize(), // Pass fillMaxSize to LazyColumn
-                        onNavigateToPredictions = {
-                            page.value = "predictions"
-                        }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                // Converts footer route strings to page keys used by this when-expression.
+                val handleNavigate: (String) -> Unit = { route ->
+                    page.value = when (route) {
+                        "/"            -> "home"
+                        "/predictions" -> "predictions"
+                        "/analytics"   -> "analytics"
+                        else           -> page.value   // unknown route — stay put
+                    }
+                }
+
+                when (page.value) {
+                    "home"        -> HomePage(
+                        modifier                = Modifier.fillMaxSize(),
+                        onNavigateToPredictions = { page.value = "predictions" },
+                        onNavigate              = handleNavigate
                     )
-                }
-                else if (page.value == "analytics") {
-                    AnalyticsScreen()
-                }
-                else if (page.value == "predictions") {
-                    PredictionScreen()
+                    "analytics"   -> AnalyticsScreen(onNavigate = handleNavigate)
+                    "predictions" -> PredictionScreen()
                 }
             }
         }
     }
 }
-
