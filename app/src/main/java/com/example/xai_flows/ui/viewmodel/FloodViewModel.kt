@@ -157,8 +157,15 @@ class FloodViewModel(
     fun updateLatestImageState(base64: String) {
         val cleanBase64 = try {
             if (base64.trim().startsWith("{")) {
-                // Service sent Gson-serialised GetLatestImageResponse
-                Regex(""""imageBase64"\s*:\s*"(.*?)"""")
+                // Service sent Gson-serialised GetLatestImageResponse.
+                // The trailing ${'"'} isn't decorative — a Kotlin raw
+                // string whose content ends in a literal " immediately
+                // before the closing """ is a well-known lexing hazard
+                // (the run of 4 quotes can be mis-parsed as closing one
+                // character early). Spelling the final quote as a string
+                // template instead avoids the ambiguity entirely; the
+                // resulting pattern is byte-for-byte identical to before.
+                Regex(""""imageBase64"\s*:\s*"(.*?)${'"'}""")
                     .find(base64)?.groupValues?.get(1) ?: base64
             } else base64
         } catch (e: Exception) { base64 }

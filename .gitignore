@@ -7,9 +7,18 @@ build/
 .kotlin/
 
 # ─── Local machine config (NEVER commit these) ────────────────────────────────
-local.properties          # SDK path — differs per machine
-secrets.properties        # If you add API keys here in future
-*.env                     # Any .env variants
+# NOTE: .gitignore has no inline-comment syntax — a trailing "# ..." on the
+# same line as a pattern becomes part of the literal pattern, not a comment.
+# That's exactly what silently broke all three lines below for the life of
+# this repo: none of them ever actually matched anything, which is how
+# local.properties ended up tracked and committed in the very first commit
+# despite the intent being right here. Comments now live on their own line.
+# SDK path — differs per machine.
+local.properties
+# If you add API keys here in future.
+secrets.properties
+# Any .env variants.
+*.env
 
 # ─── Android Studio / IntelliJ ────────────────────────────────────────────────
 .idea/

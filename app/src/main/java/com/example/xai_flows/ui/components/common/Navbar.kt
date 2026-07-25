@@ -36,7 +36,15 @@ fun NavbarMobilePreview() {
 fun NavbarMobile(
     onHomeClick: () -> Unit,
     onPredictionsClick: () -> Unit,
-    onAnalyticsClick: () -> Unit
+    onAnalyticsClick: () -> Unit,
+    // ── Auth affordance (added for the login/signup feature) ────────────────
+    // Defaulted so every existing call site (and the Preview above) keeps
+    // compiling unchanged; MainActivity is the only caller that passes
+    // real values, sourced from AuthSession.state.
+    isLoggedIn: Boolean = false,
+    userEmail: String? = null,
+    onLoginClick: () -> Unit = {},
+    onLogoutClick: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -144,6 +152,32 @@ fun NavbarMobile(
                 DrawerItem("Analytics") {
                     isMenuOpen = false
                     onAnalyticsClick()
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Auth section — logged-in state shows who's signed in and a
+                // logout action; logged-out shows a way into AuthNavHost.
+                if (isLoggedIn) {
+                    if (!userEmail.isNullOrBlank()) {
+                        Text(
+                            text = "Signed in as $userEmail",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                    DrawerItem("Log out") {
+                        isMenuOpen = false
+                        onLogoutClick()
+                    }
+                } else {
+                    DrawerItem("Log in") {
+                        isMenuOpen = false
+                        onLoginClick()
+                    }
                 }
             }
         }

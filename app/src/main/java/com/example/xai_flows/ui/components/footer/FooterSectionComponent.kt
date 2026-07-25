@@ -3,10 +3,17 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Renders one footer section (title + list of links).
  *
- * Link behaviour:
- *  • Routes in [AppConfig.Links.INTERNAL_ROUTES] (/, /predictions, /analytics)
- *    invoke [onNavigate] so the app navigates without leaving.
- *  • All other hrefs open [AppConfig.Links.WEB_BASE_URL]{href} in the browser.
+ * Every link's href is an AppRoute.path (see FooterData.kt's FooterLink doc
+ * comment) and always resolves to a real, native in-app screen — tapping
+ * any footer link invokes [onNavigate], full stop. There is no longer a
+ * "the page doesn't exist natively, open the website instead" branch: it
+ * used to fall back to AppConfig.Links.WEB_BASE_URL + href for anything
+ * not in a small internal-routes allowlist, which is exactly how nearly
+ * every footer link ended up silently opening a browser to a 404 (see
+ * AppRoute.kt's doc comment for the full story). Now that every footer
+ * page has a real native screen (ui/screens/site/), that fallback has no
+ * legitimate case left to handle, so it's gone rather than kept around as
+ * dead code that could silently start misbehaving again later.
  */
 package com.example.xai_flows.ui.components.footer
 
@@ -21,12 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.xai_flows.core.config.AppConfig
-import com.example.xai_flows.core.utils.IntentUtils
 import com.example.xai_flows.ui.models.FooterSection
 
 @Composable
@@ -35,8 +39,6 @@ fun FooterSectionComponent(
     /** Called with the route string (e.g. "/predictions") for in-app navigation. */
     onNavigate: (String) -> Unit = {}
 ) {
-    val context = LocalContext.current
-
     Column {
         Text(
             text     = section.title,
@@ -58,13 +60,7 @@ fun FooterSectionComponent(
                         role              = Role.Button,
                         onClickLabel      = link.name
                     ) {
-                        if (link.href in AppConfig.Links.INTERNAL_ROUTES) {
-                            // In-app navigation
-                            onNavigate(link.href)
-                        } else {
-                            // Open on the Vercel web frontend
-                            IntentUtils.openUrl(context, AppConfig.Links.WEB_BASE_URL + link.href)
-                        }
+                        onNavigate(link.href)
                     }
                     .padding(vertical = 4.dp)
             ) {

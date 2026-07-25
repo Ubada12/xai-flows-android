@@ -12,6 +12,15 @@
 #   public *;
 #}
 
+# TurnstileWebView's JS bridge (ui/auth/TurnstileWebView.kt) is only ever
+# invoked via WebView reflection from JavaScript, never from any Kotlin/Java
+# call site R8 can trace — without this it would be a live candidate for
+# removal/renaming the moment isMinifyEnabled is ever flipped to true,
+# silently breaking the Cloudflare Turnstile CAPTCHA in release builds.
+-keepclassmembers class com.example.xai_flows.ui.auth.TurnstileJsBridge {
+    public *;
+}
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable
