@@ -34,11 +34,11 @@ val turnstileWidgetUrl: String = localProperties.getProperty("TURNSTILE_WIDGET_U
     ?: "https://app.ubada.org/mobile-turnstile.html"
 
 android {
-    namespace = "com.example.xai_flows"
+    namespace = "org.ubada.xaiflows"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.xai_flows"
+        applicationId = "org.ubada.xaiflows"
         // Bumped 21 -> 23: androidx.security:security-crypto (used by
         // TokenStore for the encrypted refresh-token cookie) requires API 23
         // — it relies on KeyGenParameterSpec symmetric AndroidKeyStore support
@@ -100,9 +100,10 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
-    // Lifecycle + ViewModel
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    // Lifecycle + ViewModel — versions come from the catalog (lifecycleRuntimeKtx)
+    // so this can't drift from androidx-lifecycle-runtime-ktx again.
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

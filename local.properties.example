@@ -1,0 +1,34 @@
+# ══════════════════════════════════════════════════════════════════════════
+# XAI-FLOWS Mobile — Local Configuration Template
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Copy this file to `local.properties` in the project root and fill in real
+# values. `local.properties` is git-ignored and must NEVER be committed —
+# only this .example template should be checked into version control.
+#
+# Android Studio also writes `sdk.dir=<path>` into your real local.properties
+# automatically on first sync — don't add that line here, it's machine-
+# specific and has nothing to do with these app secrets.
+#
+# Both keys below are OPTIONAL — each has a working fallback baked into
+# app/build.gradle.kts, so the app builds and runs out of the box without a
+# local.properties file at all. Set these to use your own Turnstile widget.
+
+# ── Cloudflare Turnstile (CAPTCHA) ──────────────────────────────────────────
+# Public site key for the login/signup CAPTCHA widget — safe to be in the
+# APK (it's the public half of the key pair). The matching *secret* key
+# lives only in the backend's TURNSTILE_SECRET_KEY and must never appear
+# here. Get one at https://dash.cloudflare.com/?to=/:account/turnstile
+#
+# Falls back to an empty string if unset — login/register will fail
+# CAPTCHA verification without a real key.
+TURNSTILE_SITE_KEY=
+
+# Real hosted page the Turnstile widget's WebView navigates to. There is no
+# native Android Turnstile SDK, so this loads Cloudflare's actual widget
+# inside a WebView — it must be a real, dashboard-allow-listed hostname (a
+# bundled local asset does not satisfy Cloudflare's mobile-implementation
+# requirements). Falls back to the frontend repo's deployed
+# public/mobile-turnstile.html if unset — only override for local testing
+# against a different deployment (e.g. a preview URL).
+TURNSTILE_WIDGET_URL=https://app.ubada.org/mobile-turnstile.html
